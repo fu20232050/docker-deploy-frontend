@@ -1,8 +1,7 @@
 version: '3.3'
 services:
   frontend:
-    #image: ful4864654/234-deploylab-frontend:latest
-    image: {your docker user id}/234-deploylab-frontend:latest
+    image: ful4864654/234-deploylab-frontend:latest
     pull_policy: always
     ports:
       - "8086:80"
