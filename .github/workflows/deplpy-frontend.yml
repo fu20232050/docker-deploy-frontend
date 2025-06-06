@@ -1,96 +1,65 @@
-name: Deploy frontend application
-
+name: Deploy backend to host
 on:
   push:
-    branches:
-      - main       # 当 main 分支有推送时触发
-      - new-4.9    # 当 new-4.9 分支有推送时触发
-
+    branches: [new-4.9]
 jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      -
-        name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
-      -
-        name: Set up QEMU
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+
+      - name: Run Maven build
+        run: |
+          mvn clean install -DskipTests -B
+          mkdir -p target/dependency && (cd target/dependency; unzip ../*.jar)
+
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-      -
-        name: Set up Docker Buildx
+
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      -
-        name: Login to DockerHub
+
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUBUSERNAME }}  # 注意：这里使用了 ${{ }} 语法
-          password: ${{ secrets.DOCKERHUBTOKEN }}     # 注意：这里使用了 ${{ }} 语法
-      -
-        name: prepare the docker-compose run
-        run: ls -l
-      -
-        name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ secrets.DOCKERHUBUSERNAME }}/234-deploylab-frontend:main  # 为 main 分支构建的镜像标签
-      # --- 新增：构建 new-4.9 分支的镜像 ---
-      -
-        name: Build and push for new-4.9
-        uses: docker/build-push-action@v6
-        if: github.ref == 'refs/heads/new-4.9'  # 仅当触发分支是 new-4.9 时执行此步骤
-        with:
-          context: .
-          push: true
-          tags: ${{ secrets.DOCKERHUBUSERNAME }}/234-deploylab-frontend:new-4-9  # 为 new-4.9 分支构建的镜像标签 (注意标签中的连字符)
-      -
-        name: Copy docker-compose.yml to remote server
-        uses: appleboy/ssh-action@v0.1.7
-        with:
-          host: ${{ secrets.HOSTSERVER }}
-          username: ${{ secrets.HOSTUSERNAME }}
-          port: 22
-          key: ${{ secrets.HOSTSSHPRIVATEKEY }}
-          source: "docker-compose.yml"  # 假设你使用的是通用的 docker-compose.yml 文件
-          target: "/home/ubuntu/frontend"
-      # --- 新增：部署 new-4.9 分支 ---
-      -
-        name: Run docker compose for new-4.9
-        uses: appleboy/ssh-action@v1.2.1
-        if: github.ref == 'refs/heads/new-4.9'  # 仅当触发分支是 new-4.9 时执行此步骤
-        with:
-          host: ${{ secrets.HOSTSERVER }}
-          username: ${{ secrets.HOSTUSERNAME }}
-          port: 22
-          key: ${{ secrets.HOSTSSHPRIVATEKEY }}
-          script: |
-            cd /home/ubuntu/frontend
-            echo "${{ secrets.DOCKERHUBTOKEN }}" | docker login --username ${{ secrets.DOCKERHUBUSERNAME }} --password-stdin
-            docker compose down
-            docker compose pull
-            # --- 修改：使用 new-4.9 分支的镜像标签 ---
-            docker compose up -d --build
-            # --- 可选：清理旧版本 ---
-            # rm -rf /home/ubuntu/frontend
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      # --- 可选：保留部署 main 分支的步骤，如果需要的话 ---
-      # 如果 main 和 new-4.9 需要部署到不同的地方或使用不同配置，可以保留并修改下面的步骤
-      # 如果它们部署到同一服务器但不同端口/配置，则需要修改 docker-compose.yml 或使用不同的 compose 文件
-      # 以下为部署 main 分支的示例（如果需要）：
-      # -
-      #   name: Run docker compose for main
-      #   uses: appleboy/ssh-action@v1.2.1
-      #   if: github.ref == 'refs/heads/main'
-      #   with:
-      #     host: ${{ secrets.HOSTSERVER }}
-      #     username: ${{ secrets.HOSTUSERNAME }}
-      #     port: 22
-      #     key: ${{ secrets.HOSTSSHPRIVATEKEY }}
-      #     script: |
-      #       cd /home/ubuntu/frontend
-      #       echo "${{ secrets.DOCKERHUBTOKEN }}" | docker login --username ${{ secrets.DOCKERHUBUSERNAME }} --password-stdin
-      #       docker compose down
-      #       docker compose pull
-      #       docker compose up -d --build
-      #       rm -rf /home/ubuntu/frontend
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/234-deploylab-backend:latest
+
+      - name: Copy docker-compose-prod.yml via SSH
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST_SERVER }}
+          username: ${{ secrets.HOST_USER_NAME }}
+          key: ${{ secrets.HOST_SSH_PRIVATE_KEY }}
+          port: 22
+          source: "docker-compose-prod.yml"
+          target: "/home/ubuntu/backend"
+
+      - name: Run docker-compose on remote server
+        uses: appleboy/ssh-action@v1.2.1
+        with:
+          host: ${{ secrets.HOST_SERVER }}
+          username: ${{ secrets.HOST_USER_NAME }}
+          key: ${{ secrets.HOST_SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            cd /home/ubuntu/backend
+            echo ${{ secrets.DOCKER_HUB_TOKEN }} | docker login --username ${{ secrets.DOCKER_HUB_USERNAME }} --password-stdin
+            docker compose -f docker-compose-prod.yml down
+            docker compose -f docker-compose-prod.yml pull
+            docker compose -f docker-compose-prod.yml up -d
+            rm -rf /home/ubuntu/backend
