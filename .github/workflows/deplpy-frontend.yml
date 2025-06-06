@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feature/new-content
 
 jobs:
   docker:
@@ -60,3 +61,58 @@ jobs:
             docker compose pull
             docker compose up -d
             rm -rf /home/ubuntu/frontend
+  docker-prod:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/feature/new-content'
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      -
+        name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+      -
+        name: prepare the docker-compose run
+        run: |
+          ls -l
+      -
+        name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/234-deploylab-frontend:prod
+      -
+        name: copy file via ssh password
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{secrets.HOST_SERVER}}
+          username: ${{ secrets.HOST_USER_NAME }}
+          key: ${{ secrets.HOST_SSH_PRIVATE_KEY }}
+          port: 22
+          source: "docker-compose-prod.yml"
+          target: "/home/ubuntu/frontend-prod"
+      -
+        name: Run docker compose
+        uses: appleboy/ssh-action@v1.2.1
+        with:
+          host: ${{secrets.HOST_SERVER}}
+          username: ${{ secrets.HOST_USER_NAME }}
+          key: ${{ secrets.HOST_SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            cd /home/ubuntu/frontend-prod
+            echo ${{ secrets.DOCKER_HUB_TOKEN }} | docker login --username ${{ secrets.DOCKER_HUB_USERNAME }} --password-stdin
+            docker compose -f docker-compose-prod.yml down
+            docker compose -f docker-compose-prod.yml pull
+            docker compose -f docker-compose-prod.yml up -d
+            rm -rf /home/ubuntu/frontend-prod
